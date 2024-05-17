@@ -59,12 +59,11 @@ class ExpenseSharing(models.Model):
     expense = models.ForeignKey(Expense, on_delete=models.CASCADE)
     method = models.CharField(choices=EXPENSE_TYPE_CHOICES, max_length=50)
     split_with = models.ManyToManyField(User)
-    # note. you'll trim before you split if multiple
     values = models.CharField(max_length=50, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f" {self.expense.paid_by} split {self.expense.amount} "
+        return f"{self.expense.paid_by} split {self.expense.amount}"
 
     @property
     def shared_value(self):
@@ -74,10 +73,8 @@ class ExpenseSharing(models.Model):
         users = self.split_with.all()
 
         if self.method == 'EQUAL':
-            # Calculate the split amount
             split_amount = self.expense.amount / Decimal(users.count() + 1)
 
-            # First pass: Set split_value for all users
             for user in users:
                 if user.username not in split_value:
                     split_value[user.username] = {}
@@ -87,7 +84,6 @@ class ExpenseSharing(models.Model):
                     'summary': f"{user.username} owes {paid_by} : {split_amount}"
                 }
 
-                # set value for paid_by
                 if paid_by not in split_value:
                     split_value[paid_by] = {}
                 split_value[paid_by][user.username] = {
@@ -97,24 +93,20 @@ class ExpenseSharing(models.Model):
                 }
 
         elif self.method == 'EXACT':
-            # Calculate the split amount
             exact_split_amounts = [
                 Decimal(value) for value in self.values.replace(" ", "").split(',')]
             if len(exact_split_amounts) != len(users):
                 raise ValueError(
-                    'Please check the your selected users or the values')
+                    'Please check your selected users or the values')
 
             for i, user in enumerate(users):
-                # assign the amount to its owner/user
                 split_amount = exact_split_amounts[i]
 
-                # check if the user/paid_by is in the split value dictionary
                 if user.username not in split_value:
                     split_value[user.username] = {}
                 if paid_by not in split_value:
                     split_value[paid_by] = {}
 
-                # set values for user and paid_by
                 split_value[user.username][paid_by] = {
                     'split_amount': split_amount,
                     'status': 'Unpaid',
@@ -128,15 +120,16 @@ class ExpenseSharing(models.Model):
 
         elif self.method == 'PERCENT':
             amount = self.expense.amount
-            split_amounts = [
-                Decimal(value)/100*amount for value in self.values.replace(" ", "").split(',')]
+            split_amounts = [Decimal(
+                value) / 100 * amount for value in self.values.replace(" ", "").split(',')]
 
             if len(split_amounts) != len(users):
                 raise ValueError(
-                    'Please check the your selected users or the values')
+                    'Please check your selected users or the values')
 
             for i, user in enumerate(users):
                 split_amount = split_amounts[i]
+
                 if user.username not in split_value:
                     split_value[user.username] = {}
                 if paid_by not in split_value:
@@ -154,13 +147,13 @@ class ExpenseSharing(models.Model):
                 }
 
         for user in users:
-            # get and verify wallet balance
             wallet = Wallet.objects.get(user=user)
-            if wallet.balance >= Decimal(split_amount):
-                wallet.balance -= Decimal(split_amount)
+            split_amount = split_value[user.username][paid_by]['split_amount']
+            if wallet.balance >= split_amount:
+                wallet.balance -= split_amount
                 wallet.save()
 
-                paid_by_wallet.balance += Decimal(split_amount)
+                paid_by_wallet.balance += split_amount
                 paid_by_wallet.save()
 
                 split_value[user.username][paid_by]['status'] = 'Paid'
